@@ -1,0 +1,155 @@
+#!/bin/bash
+
+if [ $FIREWALL -eq 1 ]; then
+  # Block everything by default
+  ip6tables -P OUTPUT DROP &> /dev/null
+  ip6tables -P INPUT DROP &> /dev/null
+  ip6tables -P FORWARD DROP &> /dev/null
+  iptables -P OUTPUT DROP &> /dev/null
+  iptables -P INPUT DROP &> /dev/null
+  iptables -P FORWARD DROP &> /dev/null
+
+  # Temporarily allow DNS queries
+  iptables -A OUTPUT -o lo -j ACCEPT
+  iptables -A INPUT -i lo -j ACCEPT
+  iptables -A INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+  iptables -A OUTPUT -p udp --dport 53 -j ACCEPT
+
+  # We also need to temporarily allow the following
+  iptables -A OUTPUT -p tcp --dport 443 -j ACCEPT
+  iptables -A OUTPUT -p tcp --dport 1337 -j ACCEPT
+fi
+
+configdir="/pia"
+tokenfile="$configdir/.token"
+
+sharedir="/pia-shared"
+portfile="$sharedir/port.dat"
+
+pia_cacrt="/rsa_4096.crt"
+wg_conf="/etc/wireguard/wg0.conf"
+
+pf_persistfile="$configdir/portsig.json"
+
+# Handle shutdown behavior
+finish () {
+    [ $PORT_FORWARDING -eq 1 ] && pkill -f 'pf.sh'
+    echo "$(date): Shutting down Wireguard"
+    [ -w "$portfile" ] && rm "$portfile"
+    wg-quick down wg0
+    exit 0
+}
+
+trap finish SIGTERM SIGINT SIGQUIT
+
+# All done. Sleep and wait for termination.
+now_sleep () {
+  sleep infinity &
+  wait $!
+}
+
+# An error with no recovery logic occured. Either go to sleep or exit.
+fatal_error () {
+  echo "$(date): Fatal error"
+  [ $EXIT_ON_FATAL -eq 1 ] && exit 1
+  sleep infinity &
+  wait $!
+}
+
+# Get a new auth token
+# Unsure how long an auth token will remain valid
+get_auth_token () {
+  [ -z "$PASS" ] && echo "$(date): PIA password not set. Unable to retrieve new auth token." && fatal_error
+  [ -z "$USER" ] && echo "$(date): PIA username not set. Unable to retrieve new auth token." && fatal_error
+  echo "$(date): Generating auth token"
+  /scripts/pia-auth.sh -u "$USER" -p "$PASS" > "$tokenfile"
+  [ $? -ne 0 ] && echo "$(date): Failed to acquire new auth token" && fatal_error
+  chmod 600 "$tokenfile"
+}
+
+[ -w "$portfile" ] && rm "$portfile"
+
+# No LOC supplied
+[ -z "$LOC" ] && /scripts/wg-gen.sh -a && fatal_error
+
+[ ! -r "$tokenfile" ] && get_auth_token
+
+# Generate wg0.conf
+/scripts/wg-gen.sh -l "$LOC" -t "$tokenfile" -o "$wg_conf" -k "/RegionsListPubKey.pem" -d "$VPNDNS"
+result=$?
+if [ "$result" -eq 2 ]; then
+  # Reauth and retry if auth failed
+  get_auth_token
+  /scripts/wg-gen.sh -l "$LOC" -t "$tokenfile" -o "$wg_conf" -k "/RegionsListPubKey.pem" -d "$VPNDNS" || fatal_error
+elif [ "$result" -eq 3 ]; then
+  # Location not found
+  echo "$(date): Location $LOC not found"
+  /scripts/wg-gen.sh -a
+  fatal_error
+elif [ "$result" -ne 0 ]; then
+  echo "$(date): Failed to generate WireGuard config"
+  fatal_error
+fi
+
+# Add PersistentKeepalive if KEEPALIVE is set
+[ $KEEPALIVE -gt 0 ] && echo "PersistentKeepalive = $KEEPALIVE" >> "$wg_conf"
+
+# Bring up Wireguard interface
+echo "$(date): Bringing up Wireguard interface wg0"
+wg-quick up wg0 || fatal_error
+
+# Print out wg interface info
+echo
+wg
+echo
+
+echo "$(date): WireGuard successfully started"
+
+if [ $FIREWALL -eq 1 ]; then
+  iptables -F OUTPUT
+  iptables -A OUTPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+  iptables -A OUTPUT -o lo -j ACCEPT
+  iptables -F INPUT
+  iptables -A INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+  iptables -A INPUT -i lo -j ACCEPT
+
+  # Allow docker network input/output
+  docker_network="$(ip -o addr show dev eth0|
+          awk '$3 == "inet" {print $4}')"
+  iptables -A OUTPUT -o eth0 --destination $docker_network -j ACCEPT
+  iptables -A INPUT -i eth0 --source $docker_network -j ACCEPT
+
+  # Allow WG stuff
+  iptables -A OUTPUT -o wg0 -j ACCEPT
+  iptables -I OUTPUT -m mark --mark $(wg show wg0 fwmark) -j ACCEPT
+
+  echo "$(date): Firewall enabled: Blocking non-WireGuard traffic"
+fi
+
+#Set env var LOCAL_NETWORK=192.168.1.0/24 to allow LAN input/output
+if [ -n "$LOCAL_NETWORK" ]; then
+  for range in $LOCAL_NETWORK; do
+    if [ $FIREWALL -eq 1 ]; then
+      echo "$(date): Allowing network access to $range"
+      iptables -A OUTPUT -o eth0 --destination $range -j ACCEPT
+      iptables -A INPUT -i eth0 --source $range -j ACCEPT
+    fi
+    echo "$(date): Adding route to $range"
+    ip route add $range via $(ip route show 0.0.0.0/0 dev eth0 | cut -d\  -f3)
+  done
+fi
+
+# Setup port forwarding if requested and available
+pf_api_ip=$(grep '#pf api' "$wg_conf"| sed 's/#pf api ip: \(.*\)/\1/')
+pf_cn=$(grep '#cn: ' "$wg_conf"| sed 's/#cn: \(.*\)/\1/')
+if [ $PORT_FORWARDING -eq 1 ] && [ -n "$pf_api_ip" ]; then
+  echo "$(date): Starting port forward script"
+  # Try to use a persistent port if requested
+  if [ $PORT_PERSIST -eq 1 ]; then
+    /scripts/pf.sh -t "$tokenfile" -i "$pf_api_ip" -n "$pf_cn" -p "$portfile" -c "$pia_cacrt" -s "/scripts/pf_success.sh" -r "$pf_persistfile" &
+  else
+    /scripts/pf.sh -t "$tokenfile" -i "$pf_api_ip" -n "$pf_cn" -p "$portfile" -c "$pia_cacrt" -s "/scripts/pf_success.sh" &
+  fi
+fi
+
+now_sleep

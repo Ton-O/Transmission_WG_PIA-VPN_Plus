@@ -1,0 +1,68 @@
+version: '3'
+services:
+    transmission-wireguard:
+        image: docker-wireguard-pia-transmission
+        build:
+          context: ./
+          dockerfile: Dockerfile
+        container_name: Transmission-WG
+        volumes:
+            # Auth token is stored here
+            - pia:/pia
+            # If enabled, the forwarded port is dumped to /pia-shared/port.dat for potential use in other containers
+            - pia-shared:/pia-shared
+            # Adding local /lib/modules to container in read-only mode for wireguard modules
+            - /lib/modules:/lib/modules:ro
+            # Edit this to the directory that Transmission configuration should be stored, if you'd like it persistent. Also edit TRANSMISSION_HOME.
+            # - /your/path/here:/config
+            # Edit this to the directory your Transmission downloads should go
+            #- /your/path/here:/data
+            # for example: - /media/Videos:/Videos
+        cap_add:
+            - NET_ADMIN
+            # SYS_MODULE might not be needed with a 5.6+ kernel?
+            - SYS_MODULE
+        environment:
+            - LOCAL_NETWORK=<My-LOCAL-NETWORK-subnet/24>
+            - MY_INTERNAL_IP=<My-Internal-IP-address>   
+            - LOC=swiss
+            - USER=<PIA-userid>
+            - PASS=<?PI-PASSWORD
+            #- KEEPALIVE=25
+            #- VPNDNS=8.8.8.8,8.8.4.4
+            - PORT_FORWARDING=1
+            - TRANSMISSION_LOG_LEVEL=info
+            - GLOBAL_APPLY_PERMISSIONS=true
+            - TRANSMISSION_CACHE_SIZE_MB=2048
+            - TRANSMISSION_DHT_ENABLED=false
+            - TRANSMISSION_SPEED_LIMIT_DOWN=88000
+            - TRANSMISSION_SPEED_LIMIT_DOWN_ENABLED=true
+            - TRANSMISSION_SPEED_LIMIT_UP=80000 
+            - TRANSMISSION_SPEED_LIMIT_UP_ENABLED=true
+            - TRANSMISSION_RATIO_LIMIT=1.5
+            - TRANSMISSION_RATIO_LIMIT_ENABLED=true
+            - TRANSMISSION_UTP_ENABLED=true
+            - TRANSMISSION_RATIO_ENABLED=true
+            - TRANSMISSION_RPC_AUTHENTICATION_REQUIRED=true
+            - TRANSMISSION_RPC_USERNAME=<xxxx>
+            - TRANSMISSION_RPC_PASSWORD=<xxxx> 
+            - TRANSMISSION_DOWNLOAD_QUEUE_SIZE=30   
+            #- WEBPROXY_ENABLED=true
+            #- WEBPROXY_PORT=8888
+            #- HEALTH_CHECK_HOST=google.com
+        ports:
+            # Transmission
+            - 9091-9099:9091-9099
+            # Tinyproxy
+            #- 8888:8888
+        sysctls:
+            # wg-quick fails to set this without --privileged, so set it here instead if needed
+            - net.ipv4.conf.all.src_valid_mark=1
+            # May as well disable ipv6. Should be blocked anyway.
+            - net.ipv6.conf.default.disable_ipv6=1
+            - net.ipv6.conf.all.disable_ipv6=1
+            - net.ipv6.conf.lo.disable_ipv6=1
+
+volumes:
+    pia:
+    pia-shared:
