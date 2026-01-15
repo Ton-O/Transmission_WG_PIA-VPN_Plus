@@ -2,7 +2,7 @@
 Transmission over PIA with Wireguard VPN with multiple download clients
 ## Purpose
 This image is stored primarily for my __personal__ reference, but can be used freely by others.
-It is based on a number of other ideas I picked up from github and the perfect scripts of PIA ([PIA-Connections]https://github.com/pia-foss/manual-connections)
+It is based on a number of other ideas I picked up from github and the perfect scripts of [PIA](https://github.com/pia-foss/manual-connections) to control the VPN through scripting.
 ## What makes this image different from others?
 1) It is a working solution for _Transmission over a Wiregiard based PIA VPN_ (Private Internet Access).
 So far, I have not encountered a working solution with PIA and Wireguard.
