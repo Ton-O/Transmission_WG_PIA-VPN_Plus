@@ -17,6 +17,7 @@ PrintHeader=1
 function Extract_Session_ID {
     local This_RPC=$1
     SESSION_DATA=$2
+
     SESSION_ID=$(echo "$SESSION_DATA"   |  sed -n 's/.*X-Transmission-Session-Id: \(.*\)<\/code>.*/\1/p')    
     if [ -z "${SESSION_ID}" ]; then
         echo "Transmission did not return Session ID; cannot continue"
@@ -32,7 +33,6 @@ function Get_DEFAULT_Download_Dir {
     local This_RPC=$1
     local TORRENT_ID="${2}"
     local JSON_PAYLOAD
-
     JSON_PAYLOAD='{"jsonrpc": "2.0","method": "session-get","arguments": { "fields": [ "download-dir"]  },"id": 3}'
     DoRPC_call "$This_RPC" "$JSON_PAYLOAD"
     if [[ "$?" -ne "0" ]] ; then
@@ -48,6 +48,10 @@ function Initially_get_session_id {
     RPC_Port_array[${This_RPC}]="909${This_RPC}"
     SESSION_DATA=$(curl -s http://${MY_INTERNAL_IP}:${RPC_Port_array[${This_RPC}]}/transmission/rpc -d '{"jsonrpc": "2.0","method": "session-get","arguments": { "fields": [ "download-dir"] },"id": 2}' $AUTH)
     Extract_Session_ID ${This_RPC} "${SESSION_DATA}"
+    if [[ "$SESSION_ID" == "" ]] ; then
+        echo "Cannot communicate with base (active) client; aborting"
+        exit 16
+    fi
 }
 
 function StopTorrent {
@@ -76,7 +80,7 @@ function AddTorrent {
     local JSON_PAYLOAD
 
     echo "Adding torrent file: ${TORRENT_FILE_PATH} with download dir: ${TORRENT_DOWNLOAD_DIR} to $This_RPC"
-    JSON_PAYLOAD='{"jsonrpc": "2.0", "method": "torrent-add", "arguments": { "filename": "'"$TORRENT_FILE_PATH"'", "download-dir": "'"$TORRENT_DOWNLOAD_DIR"'", "bandwidthPriority": "'"$bandwidthPriority"'", }, "id": "4" }'
+    JSON_PAYLOAD='{"jsonrpc": "2.0", "method": "torrent-add", "arguments": { "filename": "'"$TORRENT_FILE_PATH"'", "download-dir": "'"$TORRENT_DOWNLOAD_DIR"'", "bandwidthPriority": "'"$bandwidthPriority"'" }, "id": "4" }'
     DoRPC_call "$This_RPC" "$JSON_PAYLOAD"
     RESPONSE=$RPC_RESULT
     # .arguments .torrentduplicate
@@ -121,7 +125,6 @@ function DoRPC_call {
     CURL_CMD+=( ${AUTH} ) 
     CURL_CMD+=( -d "$cmd_payload" ) 
     CURL_CMD+=( -H "X-Transmission-Session-Id: ${RPC_Session_ID_array[$This_RPC]}" )
-
     RPC_RESULT=$("${CURL_CMD[@]}")
     RC=$?
 
@@ -240,7 +243,7 @@ function ProcessRPCTorrentList {
             TorrentID=$(echo "$TORRENT_ENTRY"    | jq -r '.id')
             bandwidthPriority=$(echo "$TORRENT_ENTRY"    | jq -r '.bandwidthPriority')
             echo "Finished torrent found at port ${RPC_Port_array[This_RPC]}: $name ($TorrentID) }); moving to RPC port $BASE_RPC"
-            StopTorrent $This_RPC $id                            # stop the "temporarily set-aside torrent"
+            StopTorrent $This_RPC $TorrentID                    # stop the "temporarily set-aside torrent"
             if [[ "$?" -eq "0" ]] ; then                        # if successfully stopped  
                 #echo "Adding torrent to RPC port $BASE_RPC" 
                 AddTorrent "$torrentFile" "$downloadDir" $bandwidthPriority $BASE_RPC    # place torrent back in normal Transmisson-daemon
@@ -279,7 +282,6 @@ function AddTorrentToBestRPC {
 }
 
 function CheckWatchList {
-
     # Check if the directory exists
     if [ ! -d "$Multi_Watch_Dir" ]; then
         echo "Error: $Multi_Watch_Dir is not a valid directory."
@@ -333,7 +335,7 @@ function DistributeTorrents {
             TorrentID=$(echo "$TORRENT_ENTRY"    | jq -r '.id')
             bandwidthPriority=$(echo "$TORRENT_ENTRY"    | jq -r '.bandwidthPriority')
             echo "Torrent $name will be moved"
-            StopTorrent $This_RPC $id                            # stop the "temporarily set-aside torrent"
+            StopTorrent $This_RPC $TorrentID                    # stop the "temporarily set-aside torrent"
             if [[ "$?" -eq "0" ]] ; then                        # if successfully stopped  
                 #echo "Adding torrent to RPC port $BASE_RPC" 
                 AddTorrentToBestRPC  "$torrentFile" "$downloadDir" $bandwidthPriority
@@ -371,7 +373,7 @@ function ConsolidateTorrents {
                 TorrentID=$(echo "$TORRENT_ENTRY"    | jq -r '.id')
                 bandwidthPriority=$(echo "$TORRENT_ENTRY"    | jq -r '.bandwidthPriority')
                 echo "Torrent $name will be moved"
-                StopTorrent $This_RPC $id                            # stop the "temporarily set-aside torrent"
+                StopTorrent $This_RPC $TorrentID                    # stop the "temporarily set-aside torrent"
                 if [[ "$?" -eq "0" ]] ; then                        # if successfully stopped  
                     AddTorrent "$torrentFile" "$downloadDir" $bandwidthPriority $BASE_RPC    # place torrent back in normal Transmisson-daemon
                     if [[ "$RC" -eq "0" ]] ; then                    # if successfully added
@@ -387,7 +389,7 @@ function ConsolidateTorrents {
 }
 
 if [[ "$TRANSMISSION_RPC_AUTHENTICATION_REQUIRED" -eq "true" ]]; then 
-    AUTH="-u $TRANSMISSION_RPC_USERNAME:TRANSMISSION_RPC_PASSWORD"
+    AUTH="-u $TRANSMISSION_RPC_USERNAME:$TRANSMISSION_RPC_PASSWORD"
 else
     AUTH=""
 fi
@@ -395,6 +397,7 @@ fi
     PrintHeader=1 
 
 Initially_get_session_id 1 
+echo $SESSION_ID
 Get_DEFAULT_Download_Dir 1 
 $(mkdir -p "$Multi_Watch_Dir/Processed/" )
 
@@ -413,7 +416,7 @@ if [[ "$1" == "DISTRIBUTE" ]] ; then
 fi
 
 if [[ "$1" -ne "NORMAL" ]] ; then
-    echo "Please specify function to execute: NORMAL, DISTRIBUTE or CONSOLIDATE 
+    echo "Please specify function to execute: NORMAL, DISTRIBUTE or CONSOLIDATE "
     echo "Received $1 which is invalid; Execution aborted"
     exit 12
 fi
