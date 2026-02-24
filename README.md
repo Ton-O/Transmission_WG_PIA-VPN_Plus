@@ -2,7 +2,7 @@
 Transmission over PIA with Wireguard VPN with multiple download clients
 ## Purpose
 This image is stored primarily for my __personal__ reference, but can be used freely by others.
-It is based on a number of other ideas I picked up from github.
+It is based on a number of other ideas I picked up from github and the perfect scripts of [PIA](https://github.com/pia-foss/manual-connections) to control the VPN through scripting.
 ## What makes this image different from others?
 1) It is a working solution for _Transmission over a Wiregiard based PIA VPN_ (Private Internet Access).
 So far, I have not encountered a working solution with PIA and Wireguard.
@@ -31,7 +31,7 @@ __NOTE__: all of your torrent daemons STILL communicate over the VPN!
 ## So why use this solution at all?
 I use this solution to DOWNLOAD torrents in parallel, once downloaded, I automatically move them over to the base Transmission client and UPLOAD there over an ACTIVE forwarded port. That way, I'm not constrained on CPU resource for downloads, but can upload them normally. 
 ## Okay, wanna try this?
-I've uploaded the image to hub.docker to be used: (URL will be supplied soon.)
+I've uploaded the image to hub.docker to be used, to look at it, [(click here)](https://hub.docker.com/repository/docker/tonot1/docker-wireguard-pia-transmission-plus/general).
 You need to setup the docker-compose.yml file with the appropriate parameters:
 . volumes; obviously your transmission client needs to be configured externally and store the received data somewhere outside of the container.
 . LOCAL_NETWORK; you need to specify the subnet of your internal (local) network here. something like 192.168.0.0/24 or so.
@@ -42,7 +42,7 @@ You need to setup the docker-compose.yml file with the appropriate parameters:
 . TRANSMISSION_RPC_PASSWORD; the same, but a password.
 . MY_INTERNAL_IP; specify the IP_address where the docker system is running. For example 192.168.0.17 
 
-You can start the docker image using the normal docker compose statements (docker compose up -d), then connect your Transmission client through a web browser or other client software (I Use Transmission Remote client) specifying the values defined in MY_INTERNAL_IP, TRANSMISSION_RPC_USERNAME & TRANSMISSION_RPC_PASSWORD.
+You can start the docker image using the normal docker compose statements (docker compose up -d) using the supplied docker-compose.yml here, then connect your Transmission client through a web browser or other client software (I use Transmission Remote client) specifying the values defined in MY_INTERNAL_IP, TRANSMISSION_RPC_USERNAME & TRANSMISSION_RPC_PASSWORD.
 The base Transmission daemon will use port 9091, ports 9092 to 9099 are defined for the "passive torrent client".
 
 ## Script Distribute.sh... what's that for?
