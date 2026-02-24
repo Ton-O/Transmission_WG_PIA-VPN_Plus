@@ -17,7 +17,6 @@ PrintHeader=1
 function Extract_Session_ID {
     local This_RPC=$1
     SESSION_DATA=$2
-
     SESSION_ID=$(echo "$SESSION_DATA"   |  sed -n 's/.*X-Transmission-Session-Id: \(.*\)<\/code>.*/\1/p')    
     if [ -z "${SESSION_ID}" ]; then
         echo "Transmission did not return Session ID; cannot continue"
